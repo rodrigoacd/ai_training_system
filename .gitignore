@@ -65,3 +65,5 @@ data/processed/
 # Configuration with secrets
 config/secrets.yaml
 config/api_keys.yaml
+
+memory/

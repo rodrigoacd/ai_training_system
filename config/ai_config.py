@@ -10,7 +10,7 @@ from typing import Dict, Any
 class TeacherConfig:
     """Configuration for teacher AI model (Groq)"""
     api_key: str = os.getenv("GROQ_API_KEY", "")
-    model_name: str = "llama3-70b-8192"
+    model_name: str = "llama-3.1-8b-instant"
     base_url: str = "https://api.groq.com/openai/v1"
     max_tokens: int = 1024
     temperature: float = 0.3
@@ -25,6 +25,19 @@ class StudentConfig:
     temperature: float = 0.7
     do_sample: bool = True
     pad_token_id: int = 50256
+
+# @dataclass
+# class StudentConfig:
+#     """Configuration for student AI model (Llama 3.x)"""
+#     model_name: str = "meta-llama/Meta-Llama-3-8B-Instruct"  # o Meta-Llama-3.1 si tienes acceso
+#     device: str = "auto"  # auto, cpu, cuda
+#     max_length: int = 512
+#     temperature: float = 0.7
+#     do_sample: bool = True
+#     pad_token_id: int = None  # Llama 3.x define su propio pad_token
+
+
+from dataclasses import dataclass
 
 @dataclass
 class TrainingConfig:
@@ -43,11 +56,23 @@ class TrainingConfig:
     model_save_path: str = "models"
 
 @dataclass
+class MemoryConfig:
+    """Configuration for memory module"""
+    enabled: bool = True
+    embedding_model: str = "all-MiniLM-L6-v2"
+    index_type: str = "cosine"  # or "L2"
+    max_entries: int = 1000
+    min_score_threshold: float = 7.0
+    retrieve_k: int = 3
+    storage_path: str = "memory"
+
+@dataclass
 class SystemConfig:
     """Overall system configuration"""
     teacher: TeacherConfig
     student: StudentConfig
     training: TrainingConfig
+    memory: MemoryConfig
     
     # System settings
     verbose: bool = True
@@ -59,7 +84,8 @@ def get_default_config() -> SystemConfig:
     return SystemConfig(
         teacher=TeacherConfig(),
         student=StudentConfig(),
-        training=TrainingConfig()
+        training=TrainingConfig(),
+        memory= MemoryConfig()
     )
 
 def validate_config(config: SystemConfig) -> bool:

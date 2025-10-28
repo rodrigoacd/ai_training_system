@@ -28,3 +28,7 @@ rich>=12.0.0
 
 # Optional: For better logging
 loguru>=0.6.0
+
+# FAISS Memory Module
+sentence-transformers>=2.2.0
+faiss-cpu>=1.7.4  # Use faiss-gpu if you have CUDA
