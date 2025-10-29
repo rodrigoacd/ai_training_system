@@ -1,11 +1,10 @@
 """
-FAISS-based Memory Module for AI Training System
-Stores and retrieves past interactions (question-answer-feedback triples)
+FAISS-based Memory Module for AI Training System (Simplified Version)
+Stores and retrieves past interactions (question-correct answer pairs)
 using semantic similarity search.
 """
 import faiss
 import numpy as np
-import pickle
 import json
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any
@@ -16,11 +15,10 @@ from dataclasses import dataclass, asdict
 
 @dataclass
 class MemoryEntry:
-    """Represents a single interaction stored in memory"""
+    """Represents a single Q&A pair stored in memory"""
     question: str
-    student_answer: str
-    teacher_feedback: str
-    score: float
+    correct_answer: str
+    score: float  # Teacher's evaluation score (for quality filtering)
     timestamp: str
     session_id: str
     embedding: Optional[np.ndarray] = None
@@ -32,22 +30,22 @@ class MemoryEntry:
         return data
     
     def get_combined_text(self) -> str:
-        """Combine all text fields for embedding generation"""
-        return f"Question: {self.question}\nAnswer: {self.student_answer}\nFeedback: {self.teacher_feedback}"
+        """Combine question and answer for embedding generation"""
+        return f"Question: {self.question}\nAnswer: {self.correct_answer}"
 
 
 class FAISSMemoryModule:
     """
-    FAISS-based memory system for storing and retrieving past interactions.
+    FAISS-based memory system for storing and retrieving Q&A pairs.
     
-    This module enables the Student AI to learn from previous Q&A sessions
-    by retrieving semantically similar interactions when answering new questions.
+    Simplified version that stores only question and correct answer,
+    allowing the Student to learn from good examples.
     """
     
     def __init__(
         self,
         embedding_model: str = "all-MiniLM-L6-v2",
-        index_type: str = "L2",
+        index_type: str = "cosine",
         dimension: int = 384,
         storage_path: str = "memory"
     ):
@@ -88,53 +86,47 @@ class FAISSMemoryModule:
         print(f"Memory module initialized with {index_type} index (dim={self.dimension})")
     
     def _create_index(self) -> faiss.Index:
-        """
-        Create a FAISS index based on the specified type.
-        
-        Returns:
-            FAISS index object
-        """
+        """Create a FAISS index based on the specified type"""
         if self.index_type.lower() == "cosine":
-            # Cosine similarity: normalize vectors and use L2 distance
-            index = faiss.IndexFlatIP(self.dimension)  # Inner Product
+            index = faiss.IndexFlatIP(self.dimension)  # Inner Product for cosine
         else:
-            # L2 (Euclidean) distance
-            index = faiss.IndexFlatL2(self.dimension)
+            index = faiss.IndexFlatL2(self.dimension)  # L2 distance
         
         return index
     
     def add_interaction(
         self,
         question: str,
-        student_answer: str,
-        teacher_feedback: str,
+        correct_answer: str,
         score: float,
-        session_id: str
+        session_id: str,
+        student_answer: str = None,  # Optional, not used in simplified version
+        teacher_feedback: str = None  # Optional, not used in simplified version
     ) -> int:
         """
-        Store a new interaction in memory.
+        Store a new Q&A pair in memory.
         
         Args:
             question: The question asked
-            student_answer: Student's response
-            teacher_feedback: Teacher's evaluation feedback
-            score: Evaluation score (0-10)
+            correct_answer: The correct answer to the question
+            score: Evaluation score (0-10) for quality filtering
             session_id: Training session identifier
+            student_answer: (ignored in simplified version)
+            teacher_feedback: (ignored in simplified version)
             
         Returns:
             Index of the added memory entry
         """
-        # Create memory entry
+        # Create memory entry with only question and correct answer
         memory = MemoryEntry(
             question=question,
-            student_answer=student_answer,
-            teacher_feedback=teacher_feedback,
-            score=score,
+            correct_answer=correct_answer,
+            score=float(score),  # Ensure native Python float
             timestamp=datetime.now().isoformat(),
             session_id=session_id
         )
         
-        # Generate embedding from combined text
+        # Generate embedding from question + correct answer
         combined_text = memory.get_combined_text()
         embedding = self.encoder.encode([combined_text], show_progress_bar=False)[0]
         
@@ -161,13 +153,13 @@ class FAISSMemoryModule:
         exclude_session: Optional[str] = None
     ) -> List[Tuple[MemoryEntry, float]]:
         """
-        Retrieve top-k most similar past interactions.
+        Retrieve top-k most similar Q&A pairs.
         
         Args:
-            query: Question or text to search for
-            top_k: Number of similar memories to retrieve
-            min_score: Minimum teacher score threshold (optional filter)
-            exclude_session: Exclude memories from specific session (optional)
+            query: Question to search for
+            top_k: Number of similar Q&A pairs to retrieve
+            min_score: Minimum score threshold (optional filter)
+            exclude_session: Exclude Q&As from specific session (optional)
             
         Returns:
             List of (MemoryEntry, similarity_score) tuples
@@ -183,7 +175,6 @@ class FAISSMemoryModule:
             query_embedding = query_embedding / np.linalg.norm(query_embedding)
         
         # Search FAISS index
-        # Request more results for filtering
         search_k = min(top_k * 3, self.memory_count)
         distances, indices = self.index.search(
             np.array([query_embedding], dtype=np.float32),
@@ -205,12 +196,10 @@ class FAISSMemoryModule:
                 continue
             
             # Convert distance to similarity score
-            # For L2: smaller distance = more similar
-            # For cosine (IP): larger value = more similar
             if self.index_type.lower() == "cosine":
-                similarity = float(dist)  # Already similarity (inner product)
+                similarity = float(dist)
             else:
-                similarity = 1.0 / (1.0 + float(dist))  # Convert L2 to similarity
+                similarity = 1.0 / (1.0 + float(dist))
             
             results.append((memory, similarity))
             
@@ -225,39 +214,30 @@ class FAISSMemoryModule:
         max_contexts: int = 3
     ) -> str:
         """
-        Format retrieved memories as context string for prompt injection.
+        Format retrieved Q&A pairs as context string for prompt injection.
         
         Args:
             similar_memories: List of (MemoryEntry, similarity_score) tuples
-            max_contexts: Maximum number of contexts to include
+            max_contexts: Maximum number of examples to include
             
         Returns:
-            Formatted context string
+            Formatted context string with similar Q&A examples
         """
         if not similar_memories:
             return ""
         
-        context_parts = ["Here are some relevant past interactions to help you:\n"]
+        context_parts = ["Here are some similar questions and their correct answers:\n"]
         
         for i, (memory, similarity) in enumerate(similar_memories[:max_contexts], 1):
-            context_parts.append(f"\n--- Example {i} (Similarity: {similarity:.3f}, Score: {memory.score}/10) ---")
-            context_parts.append(f"Previous Question: {memory.question}")
-            context_parts.append(f"Previous Answer: {memory.student_answer}")
-            context_parts.append(f"Teacher Feedback: {memory.teacher_feedback}")
+            context_parts.append(f"\nExample {i} (Quality Score: {memory.score}/10):")
+            context_parts.append(f"Q: {memory.question}")
+            context_parts.append(f"A: {memory.correct_answer}")
         
-        context_parts.append("\nUse these examples to improve your answer.\n")
+        context_parts.append("\nNow use these examples to help answer the current question accurately.\n")
         return "\n".join(context_parts)
     
     def save(self, filename_prefix: str = "memory") -> Tuple[str, str]:
-        """
-        Save FAISS index and metadata to disk for persistence.
-        
-        Args:
-            filename_prefix: Prefix for saved files
-            
-        Returns:
-            Tuple of (index_path, metadata_path)
-        """
+        """Save FAISS index and metadata to disk"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         # Save FAISS index
@@ -268,8 +248,8 @@ class FAISSMemoryModule:
         metadata = {
             "embedding_model": self.embedding_model_name,
             "index_type": self.index_type,
-            "dimension": self.dimension,
-            "memory_count": self.memory_count,
+            "dimension": int(self.dimension),
+            "memory_count": int(self.memory_count),
             "timestamp": timestamp,
             "memories": [memory.to_dict() for memory in self.memories]
         }
@@ -285,16 +265,7 @@ class FAISSMemoryModule:
         return str(index_path), str(metadata_path)
     
     def load(self, index_path: str, metadata_path: str) -> bool:
-        """
-        Load FAISS index and metadata from disk.
-        
-        Args:
-            index_path: Path to FAISS index file
-            metadata_path: Path to metadata JSON file
-            
-        Returns:
-            True if successful, False otherwise
-        """
+        """Load FAISS index and metadata from disk"""
         try:
             # Load FAISS index
             self.index = faiss.read_index(index_path)
@@ -332,17 +303,7 @@ class FAISSMemoryModule:
         min_score: Optional[float] = None,
         keep_recent: int = 100
     ) -> int:
-        """
-        Prune memory to improve performance and remove low-quality entries.
-        
-        Args:
-            max_entries: Maximum total entries to keep (oldest removed first)
-            min_score: Remove entries below this score threshold
-            keep_recent: Always keep this many most recent entries
-            
-        Returns:
-            Number of entries removed
-        """
+        """Prune memory to improve performance and remove low-quality entries"""
         initial_count = self.memory_count
         
         if self.memory_count == 0:
@@ -350,27 +311,22 @@ class FAISSMemoryModule:
         
         # Filter by score
         if min_score is not None:
-            # Sort by timestamp to preserve recent entries
             sorted_memories = sorted(
                 enumerate(self.memories),
                 key=lambda x: x[1].timestamp,
                 reverse=True
             )
             
-            kept_indices = []
             kept_memories = []
             
             for i, (orig_idx, memory) in enumerate(sorted_memories):
-                # Keep recent entries regardless of score
                 if i < keep_recent or memory.score >= min_score:
-                    kept_indices.append(orig_idx)
                     kept_memories.append(memory)
             
             self.memories = kept_memories
         
         # Limit total entries
         if max_entries is not None and len(self.memories) > max_entries:
-            # Keep most recent entries
             sorted_memories = sorted(self.memories, key=lambda x: x.timestamp, reverse=True)
             self.memories = sorted_memories[:max_entries]
         
@@ -413,30 +369,25 @@ class FAISSMemoryModule:
         print(f"Index rebuilt with {len(embeddings)} entries")
     
     def get_statistics(self) -> Dict[str, Any]:
-        """
-        Get memory module statistics.
-        
-        Returns:
-            Dictionary with statistics
-        """
+        """Get memory module statistics"""
         if self.memory_count == 0:
             return {
                 "total_memories": 0,
                 "index_type": self.index_type,
-                "dimension": self.dimension
+                "dimension": int(self.dimension)
             }
         
         scores = [m.score for m in self.memories]
         sessions = list(set(m.session_id for m in self.memories))
         
         return {
-            "total_memories": self.memory_count,
+            "total_memories": int(self.memory_count),
             "index_type": self.index_type,
-            "dimension": self.dimension,
+            "dimension": int(self.dimension),
             "embedding_model": self.embedding_model_name,
-            "average_score": np.mean(scores),
-            "score_range": (np.min(scores), np.max(scores)),
-            "unique_sessions": len(sessions),
+            "average_score": float(np.mean(scores)),
+            "score_range": (float(np.min(scores)), float(np.max(scores))),
+            "unique_sessions": int(len(sessions)),
             "oldest_entry": min(m.timestamp for m in self.memories),
             "newest_entry": max(m.timestamp for m in self.memories)
         }

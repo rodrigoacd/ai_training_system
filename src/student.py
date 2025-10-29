@@ -102,21 +102,23 @@ class StudentAI:
     def generate_response(self, question: str, context: str = None) -> str:
         """Generate response to a question"""
         try:
-            # Prepare the prompt
-            if context:
-                prompt = f"Context: {context}\nQuestion: {question}\nAnswer:"
+            # Prepare the prompt with better context integration
+            if context and context.strip():
+                # Add context BEFORE the question for better influence
+                prompt = f"{context}\n\nNow answer this question:\nQuestion: {question}\nAnswer:"
             else:
                 prompt = f"Question: {question}\nAnswer:"
             
-            # Generate response
+            # Generate response with adjusted parameters for context
             generation_config = GenerationConfig(
-                max_new_tokens=min(200, self.config.max_length),
+                max_new_tokens=min(250, self.config.max_length),  # Increased for context
                 temperature=self.config.temperature,
                 do_sample=self.config.do_sample,
                 pad_token_id=self.tokenizer.pad_token_id,
                 eos_token_id=self.tokenizer.eos_token_id,
                 repetition_penalty=1.1,
-                length_penalty=1.0
+                length_penalty=1.0,
+                top_p=0.9  # Add nucleus sampling for better quality
             )
             
             outputs = self.generator(
@@ -135,7 +137,8 @@ class StudentAI:
             self.conversation_history.append({
                 "question": question,
                 "answer": response,
-                "context": context
+                "context": context,
+                "context_used": bool(context and context.strip())
             })
             
             return response
